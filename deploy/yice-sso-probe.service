@@ -1,5 +1,5 @@
 [Unit]
-Description=yice-sso health probe (alerts via the notification service and/or a Feishu group webhook, at most once per hour)
+Description=yice-sso health probe (alerts via yice-notification, at most once per hour)
 After=yice-sso.service
 
 [Service]
@@ -8,15 +8,11 @@ WorkingDirectory=/opt/yice/yice-sso/current
 EnvironmentFile=/opt/yice/yice-sso/.env
 Environment=SSO_ENV_FILE=/dev/null
 Environment=PYTHONDONTWRITEBYTECODE=1
-# The webhook has no idempotency key: the last alerted hour is kept here.
-Environment=SSO_ALERT_STATE_DIR=/var/lib/yice-sso-probe
-StateDirectory=yice-sso-probe
 ExecStart=/opt/yice/yice-sso/current/.venv/bin/python -m sso_service.cli probe
 DynamicUser=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-# AF_UNIX: name resolution for the webhook host on hosts that resolve through a local socket.
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_INET AF_INET6
 MemoryMax=96M

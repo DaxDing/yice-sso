@@ -34,8 +34,7 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST")
 RSYNC=(rsync -az --delete --itemize-changes --no-owner --no-group
   --exclude .env --exclude '.env.*' --exclude .venv/ --exclude output/
   --exclude test/ --exclude tests/ --exclude __pycache__/ --exclude '*.pyc'
-  --exclude .pytest_cache/ --exclude .ruff_cache/ --exclude .DS_Store --exclude /REVISION
-  --exclude /docs/ --exclude /publish/)
+  --exclude .pytest_cache/ --exclude .ruff_cache/ --exclude .DS_Store --exclude /REVISION --exclude /publish/)
 
 step() { printf '== %s\n' "$*"; }
 
