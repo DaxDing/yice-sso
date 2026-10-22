@@ -14,7 +14,7 @@ ERROR_MESSAGES = {
     "oauth_user_info_failed": "无法读取飞书身份，请重新登录",
     "oauth_upstream_unavailable": "飞书暂时无法访问，请稍后重试",
     "oauth_denied": "已取消飞书授权",
-    "member_not_allowed": "当前飞书账号不在公司在职名单内（通讯录每天 08:00 同步）",
+    "member_not_allowed": "当前飞书账号不在公司在职名单内，请联系管理员",
     "tenant_not_allowed": "飞书授权企业与登录入口不一致",
     "provider_unavailable": "该企业登录入口未启用",
     "provider_not_allowed": "当前登录的企业账号无权访问此应用，请切换账号",

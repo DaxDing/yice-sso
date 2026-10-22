@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import importlib.metadata
 import json
 import os
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .callers import CallerError, CallerRegistry
@@ -19,6 +25,8 @@ from .store import MysqlStore, StoreUnavailable
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_BLOCKED = 0, 1, 2, 3
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# Feishu / Lark group custom-bot webhooks; anything else is refused rather than posted to.
+WEBHOOK_HOSTS = frozenset({"open.feishu.cn", "open.larksuite.com"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,7 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     events.add_argument("--since", required=True, help="YYYY-MM-DD or ISO datetime, server local time")
     events.add_argument("--subject", help="subject_id filter")
     events.add_argument("--limit", type=int, default=50)
-    probe = sub.add_parser("probe", help="check local /health; on failure alert once per hour via yice-notification")
+    probe = sub.add_parser(
+        "probe", help="check local /health; on failure alert at most once per hour (notification service and/or webhook)"
+    )
     probe.add_argument("--url", default="http://127.0.0.1:8773/health")
     return parser
 
@@ -70,8 +80,11 @@ def self_check() -> dict[str, Any]:
         try:
             health = store.health()
             checks["mysql_schema"] = {"ok": health["tables_ok"] and health["schema_ok"], **health}
-            store.active_member("ou_self_check_probe")
-            checks["member_directory"] = {"ok": True}
+            if any(status["directory"] for status in providers.status().values()):
+                store.active_member("ou_self_check_probe")
+                checks["member_directory"] = {"ok": True}
+            else:
+                checks["member_directory"] = {"ok": True, "skipped": "no provider declares a directory"}
         except StoreUnavailable:
             checks["mysql"] = {"ok": False, "message": "MySQL 不可用或权限不足"}
     except (ValueError, OSError, ProviderError, CallerError) as exc:
@@ -148,17 +161,29 @@ def _probe(url: str) -> int:
         reason = f"health status {exc.code}"
     except (urllib.error.URLError, OSError, ValueError) as exc:
         reason = f"health unreachable: {type(exc).__name__}"
+    hour = datetime.now().strftime("%Y%m%d%H")
+    text = f"yice-sso 健康检查失败：{reason}。登录可能不可用，请检查所在主机上的 yice-sso 服务。"
+    alerts: dict[str, str] = {}
     api = os.environ.get("NOTIFICATION_API_URL", "").rstrip("/")
     token = os.environ.get("NOTIFICATION_API_TOKEN", "").strip()
     target = os.environ.get("SSO_ALERT_TARGET", "").strip()
-    if not (api and token and target):
-        _print({"ok": False, "verdict": "BLOCKED", "reason": reason, "alert": "notification not configured"})
+    if api and token and target:
+        alerts["notification"] = _alert_notification(api, token, target, text, hour)
+    webhook = os.environ.get("SSO_ALERT_WEBHOOK", "").strip()
+    if webhook:
+        alerts["webhook"] = _alert_webhook(webhook, os.environ.get("SSO_ALERT_WEBHOOK_SECRET", "").strip(), text, hour)
+    if not alerts:
+        _print({"ok": False, "verdict": "BLOCKED", "reason": reason, "alerts": "not configured"})
         return EXIT_BLOCKED
-    hour = datetime.now().strftime("%Y%m%d%H")
+    _print({"ok": False, "verdict": "FAIL", "reason": reason, "alerts": alerts})
+    return EXIT_FAILED
+
+
+def _alert_notification(api: str, token: str, target: str, text: str, hour: str) -> str:
     payload = {
         "template": "ops.text.v1",
         "target": {"ref": target},
-        "data": {"body": f"yice-sso 健康检查失败：{reason}。登录可能不可用，请检查所在主机上的 yice-sso 服务。"},
+        "data": {"body": text},
         # One alert per hour: the notification service replays the same key instead of resending.
         "idempotency_key": f"yice-sso-health-{hour}",
     }
@@ -170,11 +195,50 @@ def _probe(url: str) -> int:
     )
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            alert = json.loads(response.read() or b"{}").get("status")
+            return str(json.loads(response.read() or b"{}").get("status"))
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        alert = f"failed: {type(exc).__name__}"
-    _print({"ok": False, "verdict": "FAIL", "reason": reason, "alert": alert})
-    return EXIT_FAILED
+        return f"failed: {type(exc).__name__}"
+
+
+def _alert_webhook(url: str, secret: str, text: str, hour: str) -> str:
+    """Feishu group custom bot. The URL is itself a credential: it never appears in output.
+
+    A webhook has no idempotency key, so the last hour that was sent is kept in SSO_ALERT_STATE_DIR
+    (the probe unit's StateDirectory); a failed send is not recorded and retries on the next run.
+    """
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or (parts.hostname or "") not in WEBHOOK_HOSTS:
+        return "failed: SSO_ALERT_WEBHOOK must be an https://open.feishu.cn or open.larksuite.com bot URL"
+    state_dir = os.environ.get("SSO_ALERT_STATE_DIR", "").strip()
+    if not state_dir:
+        return "failed: SSO_ALERT_STATE_DIR is not set, so the hourly limit cannot be kept"
+    state = Path(state_dir) / "webhook-last-hour"
+    try:
+        if state.exists() and state.read_text(encoding="utf-8").strip() == hour:
+            return "already sent this hour"
+    except OSError as exc:
+        return f"failed: state unreadable ({type(exc).__name__})"
+    payload: dict[str, Any] = {"msg_type": "text", "content": {"text": text}}
+    if secret:
+        timestamp = str(int(time.time()))
+        digest = hmac.new(f"{timestamp}\n{secret}".encode("utf-8"), digestmod=hashlib.sha256).digest()
+        payload.update(timestamp=timestamp, sign=base64.b64encode(digest).decode())
+    request = urllib.request.Request(
+        url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            body = json.loads(response.read() or b"{}")
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return f"failed: {type(exc).__name__}"
+    code = body.get("code", body.get("StatusCode"))
+    if code != 0:
+        return f"failed: feishu code {code}"
+    try:
+        state.write_text(hour, encoding="utf-8")
+    except OSError as exc:
+        return f"sent; state not saved ({type(exc).__name__})"
+    return "sent"
 
 
 def _serve(host: str, port: int) -> int:

@@ -6,5 +6,3 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON yice_sso.session TO 'yice_sso_app'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON yice_sso.oauth_state TO 'yice_sso_app'@'%';
 GRANT SELECT, INSERT ON yice_sso.login_event TO 'yice_sso_app'@'%';
 GRANT SELECT ON yice_sso.schema_migration TO 'yice_sso_app'@'%';
-GRANT SELECT (open_id, name, avatar, enabled, dept_id) ON yice_information.member TO 'yice_sso_app'@'%';
-GRANT SELECT (dept_id, name) ON yice_information.dept TO 'yice_sso_app'@'%';

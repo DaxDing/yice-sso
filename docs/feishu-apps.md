@@ -1,6 +1,6 @@
 # 飞书企业应用与告警 bot 设计
 
-yice-sso 只用飞书做一件事：网页登录（OAuth 授权码流程），确认「这个人是谁、属于哪家允许的企业」。消息、通讯录、群聊等能力都不在这里，所以登录应用只开最小权限、不开机器人能力；告警消息交给独立的通知服务和它的企业 bot。
+yice-sso 只用飞书做一件事：网页登录（OAuth 授权码流程），确认「这个人是谁、属于哪家允许的企业」。消息、通讯录、群聊等能力都不在这里，所以登录应用只开最小权限、不开机器人能力；告警消息交给一个飞书群自定义机器人（或你已有的通知服务）。
 
 ## 一个企业，一个登录应用
 
@@ -13,7 +13,8 @@ yice-sso 只用飞书做一件事：网页登录（OAuth 授权码流程），�
 
 - 主企业用在职名单：员工离职后最长一小时（写操作立即）失去登录态，不依赖飞书侧停用。
 - 合作企业用租户：不需要对方的通讯录，只确认授权来自对方企业；对方自己管理谁能用（应用可用范围）。
-- 名单表合同：`member(open_id, name, avatar, enabled, dept_id)`、`dept(dept_id, name)`，运行账号只有这几列的 `SELECT`（见 [`schema/grants.sql`](../schema/grants.sql)）。名单由你自己的同步任务维护。
+- 名单是可选的：只有声明了 `"directory": true` 的企业才需要。表合同是 `member(open_id, name, avatar, enabled, dept_id)`、`dept(dept_id, name)`，运行账号只有这几列的 `SELECT`（[`schema/grants.directory.sql`](../schema/grants.directory.sql)）。还没有名单表，用 [`schema/directory.example.sql`](../schema/directory.example.sql) 建，再由你自己的同步任务（例如每天拉一次飞书通讯录）维护。
+- 不想维护名单：把主企业也写成租户方式（`"directory": false` + `tenant_key_env`），自检和授权都不会再碰名单表；代价是离职要靠飞书侧停用账号或调整应用可用范围，SSO 不会主动收回会话。
 - 一个调用方（接入的 Web）可以允许多个 provider：只允许一个时直接跳飞书，允许多个时先显示选择页。
 
 ## 在飞书开放平台创建登录应用
@@ -48,11 +49,39 @@ yice-sso 只用飞书做一件事：网页登录（OAuth 授权码流程），�
 - **换 App ID、`tenant_key`、放行方式**：provider 摘要（`id`、`app_id`、`tenant_key`、`directory` 的哈希，不含 secret）随之改变，该企业已有会话在下一次校验时一律失效，所有人重新登录。这是有意的：给某人担保的企业配置已经不是当初那个了。
 - **下线一个企业**：从调用方的 `providers` 里移除即可拒绝它登录该应用（应用收到 403 `provider_not_allowed`）；从 provider 目录删除前，先从所有调用方移除。
 
-## 告警 bot：不在登录应用里
+## 告警 bot：飞书群自定义机器人
 
-`yice-sso-probe.timer` 每 5 分钟跑一次 `yice-sso probe`：探本机 `/health`，失败时调用通知服务的 `POST /v1/notifications`，发给 `SSO_ALERT_TARGET`。幂等键按小时生成（`yice-sso-health-YYYYMMDDHH`），同一小时最多一条，服务一直挂着也不会刷屏。
+`yice-sso-probe.timer` 每 5 分钟跑一次 `yice-sso probe`：探本机 `/health`，失败就告警，同一小时最多一条，服务一直挂着也不会刷屏。告警渠道两种，配一种或两种都行：
 
-- 机器人凭证只在通知服务里（参考实现 [yice-feishu-notice](https://github.com/DaxDing/yice-feishu-notice)：用企业 bot 发 Markdown / 富文本，按人名、open_id 或群发送，带幂等回放）。
-- yice-sso 只持有通知服务给它的调用方 token（`NOTIFICATION_API_TOKEN`），只能发通知，拿不到 bot 的 App Secret。
-- 这样拆分，登录应用永远只有「获取用户基本信息」一个权限；换 bot、换通知渠道都不用碰登录配置。
-- 不需要告警时，三个 `NOTIFICATION_*` / `SSO_ALERT_TARGET` 留空，或不启用 `yice-sso-probe.timer`；健康检查失败时 `probe` 返回 `BLOCKED`（`notification not configured`），不会假装已发送。
+| 渠道 | 配置 | 一小时一条靠什么 |
+| --- | --- | --- |
+| 飞书群自定义机器人（推荐，几分钟配好） | `SSO_ALERT_WEBHOOK`，可选 `SSO_ALERT_WEBHOOK_SECRET` | 探活 unit 的 `StateDirectory` 记下已发的小时；发送失败不记，下次重试 |
+| 自己的通知服务 | `NOTIFICATION_API_URL`、`NOTIFICATION_API_TOKEN`、`SSO_ALERT_TARGET` | 通知服务按幂等键 `yice-sso-health-YYYYMMDDHH` 去重（接口见 [yice-feishu-notice](https://github.com/DaxDing/yice-feishu-notice)） |
+
+### 注册群机器人
+
+1. 在飞书建一个运维群（或用已有的），把要收告警的人拉进来。
+2. **群设置 → 群机器人 → 添加机器人 → 自定义机器人**，起名例如「yice-sso 告警」，添加。
+3. 复制 **webhook 地址**（`https://open.feishu.cn/open-apis/bot/v2/hook/…`，海外版是 `open.larksuite.com`）。这个地址本身就是凭证：拿到它的人都能往群里发消息，只放服务器 `.env`，不进仓库、不贴聊天。
+4. **安全设置**勾选「签名校验」，复制密钥（推荐；不开也能用，但地址泄露后任何人都能冒充告警）。不要勾「自定义关键词」或「IP 白名单」，除非你确认告警文本和服务器出口 IP 都满足它们。
+5. 填进服务器 `/opt/yice/yice-sso/.env`：
+
+   ```bash
+   SSO_ALERT_WEBHOOK='https://open.feishu.cn/open-apis/bot/v2/hook/<你的 hook id>'
+   SSO_ALERT_WEBHOOK_SECRET='<签名密钥>'
+   ```
+
+6. 自测一次（故意探一个不存在的端口；用临时状态目录，不占用正式的「本小时已发」记录）：
+
+   ```bash
+   cd /opt/yice/yice-sso && SSO_PYTHON=current/.venv/bin/python SSO_ENV_FILE=.env \
+     SSO_ALERT_STATE_DIR="$(mktemp -d)" current/bin/yice-sso probe --url http://127.0.0.1:9/health
+   ```
+
+   输出 `"alerts": {"webhook": "sent"}` 且群里收到一条「yice-sso 健康检查失败」就配好了。签名不对会是 `failed: feishu code 19021`。
+
+### 设计
+
+- **凭证分开**：登录应用永远只有「获取用户基本信息」一个权限；群机器人只能往这一个群发消息。换告警渠道不碰登录配置，登录应用泄露也发不了消息。
+- **地址不外泄**：webhook 地址和密钥只在服务器 `.env`；`probe` 的输出、日志里都不出现。只接受 `open.feishu.cn` / `open.larksuite.com` 的 https 地址，填错会明确报错，不会往别处发。
+- **失败显式**：两种渠道都没配时，健康检查失败返回 `BLOCKED`（`alerts: not configured`）；发送失败如实报 `failed: …`，不会假装已发送。不需要告警时不配即可，或不启用 `yice-sso-probe.timer`。

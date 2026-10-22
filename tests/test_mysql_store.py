@@ -1,4 +1,4 @@
-"""MysqlStore against a private disposable mysqld, connected as yice_sso_app with schema/grants.sql applied."""
+"""MysqlStore against a private disposable mysqld, connected as yice_sso_app with schema/grants*.sql applied."""
 
 from __future__ import annotations
 
@@ -80,6 +80,7 @@ class Sandbox:
         self.root_sql(DIRECTORY_SQL)
         self.root_sql(f"CREATE USER 'yice_sso_app'@'%' IDENTIFIED BY '{self.password}';")
         self.root_sql((ROOT / "schema/grants.sql").read_text(encoding="utf-8"))
+        self.root_sql((ROOT / "schema/grants.directory.sql").read_text(encoding="utf-8"))
 
     def root_sql(self, sql: str, *, check: bool = True) -> subprocess.CompletedProcess:
         result = subprocess.run(

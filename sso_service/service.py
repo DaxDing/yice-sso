@@ -166,7 +166,7 @@ class SsoService:
                     meta,
                     "denied",
                     "member_not_allowed",
-                    f"{feishu_name or open_id} 不在公司通讯录在职名单内（通讯录每天 08:00 同步）",
+                    f"{feishu_name or open_id} 不在公司在职名单内",
                     subject_id=open_id,
                     name=feishu_name,
                     **context,

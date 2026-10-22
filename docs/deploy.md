@@ -20,11 +20,17 @@
    ```bash
    mysql -h <db-host> -u <admin> -p < schema/yice_sso.sql
    mysql -h <db-host> -u <admin> -p -e "CREATE USER 'yice_sso_app'@'%' IDENTIFIED BY '<强密码>';"
-   mysql -h <db-host> -u <admin> -p < schema/grants.sql   # 名单库不叫 yice_information 时先改这里
+   mysql -h <db-host> -u <admin> -p < schema/grants.sql
    ```
-   运行账号只能读写 `session` / `oauth_state`，只能追加 `login_event`（触发器拒绝改删），名单表只读几列。
+   运行账号只能读写 `session` / `oauth_state`，只能追加 `login_event`（触发器拒绝改删）。
+
+   **有企业用在职名单方式**（`"directory": true`）时再加两步，没有就跳过，自检也不会检查名单：
+   ```bash
+   mysql -h <db-host> -u <admin> -p < schema/directory.example.sql   # 还没有名单表时；库名与 SSO_DIRECTORY_DB 一致
+   mysql -h <db-host> -u <admin> -p < schema/grants.directory.sql    # 名单库不叫 yice_information 时先改库名
+   ```
 3. **声明**：编辑 [`config/providers.v1.json`](../config/providers.v1.json)（登录企业）和 [`config/callers.v1.json`](../config/callers.v1.json)（接入的 Web：origin、允许的企业、token 变量名、内网来源网段），提交。
-4. **服务器 `.env`**：按 [`deploy/production.env.example`](../deploy/production.env.example) 在服务器上新建 `/opt/yice/yice-sso/.env`，`chmod 600`。调用方 token 不用手填，部署时自动生成。
+4. **服务器 `.env`**：按 [`deploy/production.env.example`](../deploy/production.env.example) 在服务器上新建 `/opt/yice/yice-sso/.env`，`chmod 600`。调用方 token 不用手填，部署时自动生成。要告警就按 [注册群机器人](feishu-apps.md#注册群机器人) 填 `SSO_ALERT_WEBHOOK`（部署后自测一次）。
 5. **nginx**：把 [`deploy/nginx-sso.locations.conf`](../deploy/nginx-sso.locations.conf) 放进父域的 `server` 块（在 `location /` 之前），`http` 块加一行 `limit_req_zone $binary_remote_addr zone=yice_sso_authorize:10m rate=10r/m;`，然后 `nginx -t && systemctl reload nginx`。只转发 `/sso/`，内部 API `/v1` 永远不经过 nginx。
 
 ## 一键部署
@@ -40,7 +46,7 @@ deploy/deploy.sh --execute   # 正式部署
 1. 本机检查：工作区无未提交改动，`uv run --locked pytest` 全部通过。
 2. 上传到新的版本目录，在服务器上建独立 venv 并安装锁定依赖。
 3. 给 `callers.v1.json` 里还没有 token 的调用方生成 token，追加进服务器 `.env`；值只在服务器上，不回传。
-4. 用与 systemd 相同的环境跑 `--self-check`（配置、企业凭证、调用方 token、数据库表与名单权限）。
+4. 用与 systemd 相同的环境跑 `--self-check`（配置、企业凭证、调用方 token、数据库表；有名单方式的企业时还查名单权限）。
 5. 原子切换 `current`，安装 / 更新 systemd unit 与 logrotate，重启 `yice-sso`，30 秒内等 `/health` 正常。
 6. 不健康就切回上一版本并重启；启用 `yice-sso-probe.timer`；清理旧版本。
 

@@ -97,7 +97,7 @@ def test_grant_manifest_matches_grants_sql():
     if not manifest_path.exists():
         return
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    sql = (ROOT / "schema/grants.sql").read_text(encoding="utf-8")
+    sql = "".join((ROOT / name).read_text(encoding="utf-8") for name in ("schema/grants.sql", "schema/grants.directory.sql"))
     granted = {}
     for privileges, table in re.findall(r"^GRANT (.+?) ON (\S+) TO 'yice_sso_app'@'%';$", sql, re.M):
         columns = re.match(r"SELECT \((.+)\)$", privileges)
@@ -122,3 +122,17 @@ def test_info_nginx_carries_the_sso_locations():
     callback = text.split("location = /sso/callback {", 1)[1].split("}", 1)[0]
     assert "access_log off;" in callback
     assert text.count("proxy_pass http://127.0.0.1:8773;") == 3
+
+
+def test_directory_grants_are_separate_and_match_the_example_tables():
+    """grants.sql works without a directory; the directory grants cover exactly what the example DDL creates."""
+    core = (ROOT / "schema/grants.sql").read_text(encoding="utf-8")
+    directory = (ROOT / "schema/grants.directory.sql").read_text(encoding="utf-8")
+    example = (ROOT / "schema/directory.example.sql").read_text(encoding="utf-8")
+    assert re.findall(r"^GRANT .+ ON (\S+) ", core, re.M) and all(
+        table.startswith("yice_sso.") for table in re.findall(r"^GRANT .+ ON (\S+) ", core, re.M)
+    )
+    for columns, table in re.findall(r"^GRANT SELECT \((.+)\) ON (\S+) ", directory, re.M):
+        block = example.split(f"CREATE TABLE IF NOT EXISTS {table} (", 1)[1].split(") ENGINE", 1)[0]
+        declared = {line.split()[0] for line in block.splitlines() if line.strip() and not line.strip().startswith("KEY")}
+        assert {c.strip() for c in columns.split(",")} <= declared
