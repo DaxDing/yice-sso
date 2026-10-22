@@ -65,6 +65,7 @@ class Settings:
     callers_path: Path = ROOT / "config/callers.v1.json"
     access_log_path: Path = ROOT / "output/log/sso-access.jsonl"
     timeout_seconds: float = 15
+    icp: str = ""  # ICP filing number shown in the page footer; empty hides it
 
     def __post_init__(self) -> None:
         parts = urllib.parse.urlsplit(self.web_url)
@@ -130,6 +131,7 @@ class Settings:
             callers_path=_path(values, "SSO_CALLERS_PATH", "config/callers.v1.json"),
             access_log_path=_path(values, "SSO_ACCESS_LOG_PATH", "output/log/sso-access.jsonl"),
             timeout_seconds=timeout,
+            icp=str(values.get("SSO_ICP", "")).strip(),
         )
 
 

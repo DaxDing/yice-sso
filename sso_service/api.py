@@ -179,6 +179,9 @@ def create_app(
     def page(request: Request, status: int, body: str) -> HTMLResponse:
         return HTMLResponse(body, status_code=status, headers=PAGE_HEADERS)
 
+    def error_view(code: str) -> str:
+        return error_page(code, icp=settings.icp)
+
     def cookie(name: str, value: str, *, max_age: int, path: str, domain: bool) -> str:
         parts = [f"{name}={value}", f"Path={path}", f"Max-Age={max_age}", "HttpOnly", "SameSite=Lax"]
         if domain and settings.cookie_domain:
@@ -203,7 +206,7 @@ def create_app(
     async def store_unavailable(request: Request, exc: StoreUnavailable):
         note(request, error_code="auth_unavailable")
         if request.url.path.startswith("/sso/") and request.url.path != "/sso/me":
-            return page(request, 503, error_page("auth_unavailable"))
+            return page(request, 503, error_view("auth_unavailable"))
         return JSONResponse(status_code=503, content=_error("auth_unavailable", "认证存储暂不可用"))
 
     @application.exception_handler(RequestValidationError)
@@ -243,7 +246,7 @@ def create_app(
         target = callers.get(caller)
         if target is None:
             note(request, error_code="caller_unavailable")
-            return page(request, 400, error_page("caller_unavailable"))
+            return page(request, 400, error_view("caller_unavailable"))
         note(request, caller=target.id)
         next_url = target.safe_next(next)
         token = request.cookies.get(SESSION_COOKIE, "")
@@ -258,7 +261,7 @@ def create_app(
         providers = service.login_providers(target)
         if not providers:
             note(request, error_code="provider_unavailable")
-            return page(request, 503, error_page("provider_unavailable"))
+            return page(request, 503, error_view("provider_unavailable"))
         if not error and len(providers) == 1:
             query = urllib.parse.urlencode({"caller": target.id, "provider": providers[0].id, "next": next_url})
             return redirect(f"{base}/authorize?{query}")
@@ -269,6 +272,7 @@ def create_app(
             next_url=next_url,
             providers=providers,
             error=error or None,
+            icp=settings.icp,
         )
         return page(request, 200, body)
 
@@ -277,7 +281,7 @@ def create_app(
         target = callers.get(caller)
         if target is None:
             note(request, error_code="caller_unavailable")
-            return page(request, 400, error_page("caller_unavailable"))
+            return page(request, 400, error_view("caller_unavailable"))
         note(request, caller=target.id, provider=provider)
         try:
             start = service.begin_login(target, provider, next)
@@ -295,7 +299,7 @@ def create_app(
         states = request.query_params.getlist("state")
         if len(codes) > 1 or len(states) != 1:
             note(request, error_code="oauth_state_invalid")
-            return page(request, 400, error_page("oauth_state_invalid"))
+            return page(request, 400, error_view("oauth_state_invalid"))
         flow_cookie = state_cookie_name(states[0])
         clear_state = cookie(flow_cookie, "", max_age=0, path="/sso", domain=False)
         try:
@@ -309,7 +313,7 @@ def create_app(
         except LoginFailure as exc:
             note(request, caller=exc.caller_id, error_code=exc.code, **({} if exc.recorded else {"event": "unrecorded"}))
             if exc.caller_id is None:
-                response = page(request, 400, error_page(exc.code))
+                response = page(request, 400, error_view(exc.code))
                 response.headers.append("Set-Cookie", clear_state)
                 return response
             return redirect(login_url(exc.caller_id, error=exc.code), clear_state)
@@ -322,9 +326,11 @@ def create_app(
         target = callers.get(caller)
         if target is None:
             note(request, error_code="caller_unavailable")
-            return page(request, 400, error_page("caller_unavailable"))
+            return page(request, 400, error_view("caller_unavailable"))
         note(request, caller=target.id)
-        body = logout_page(base=base, caller_id=target.id, caller_label=target.label, next_url=next)
+        body = logout_page(
+            base=base, caller_id=target.id, caller_label=target.label, next_url=next, icp=settings.icp
+        )
         # no-referrer would make the browser send "Origin: null" on this form's POST and fail the check below.
         headers = {**PAGE_HEADERS, "Content-Security-Policy": LOGOUT_FORM_POLICY, "Referrer-Policy": "same-origin"}
         return HTMLResponse(body, headers=headers)
@@ -340,12 +346,12 @@ def create_app(
             same_origin = request.headers.get("sec-fetch-site") == "same-origin"
         if not same_origin:
             note(request, error_code="logout_forbidden")
-            return page(request, 403, error_page("logout_forbidden"))
+            return page(request, 403, error_view("logout_forbidden"))
         form = urllib.parse.parse_qs((await request.body()).decode("utf-8", "replace"), max_num_fields=4)
         target = callers.get((form.get("caller") or [""])[0])
         if target is None:
             note(request, error_code="caller_unavailable")
-            return page(request, 400, error_page("caller_unavailable"))
+            return page(request, 400, error_view("caller_unavailable"))
         note(request, caller=target.id)
         token = request.cookies.get(SESSION_COOKIE, "")
         if token:

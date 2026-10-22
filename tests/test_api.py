@@ -349,3 +349,25 @@ def test_a_state_presented_under_another_flows_cookie_is_rejected(env):
     forged = f"{state_cookie_name(state_a)}={state_b}; {cookie_b}"
     response = client.get("/sso/callback", params={"code": "c-member", "state": state_a}, headers={"Cookie": forged})
     assert response.status_code == 400 and not store.sessions
+
+
+def test_pages_share_the_app_sign_in_look_and_show_the_icp_footer_only_when_set(tmp_path):
+    from dataclasses import replace
+
+    from sso_service.pages import error_page, login_page, logout_page
+
+    plain = error_page("logged_out")
+    assert '<div class="logo"></div>' in plain and "--acc:#3f6ea8" in plain and "beian.miit.gov.cn" not in plain
+    icp = "示例ICP备00000000号-1"
+    for body in (
+        error_page("logged_out", icp=icp),
+        logout_page(base="https://example.com/sso", caller_id="task", caller_label="ops", next_url="", icp=icp),
+        login_page(base="https://example.com/sso", caller_id="task", caller_label="ops", next_url="",
+                   providers=[], error=None, icp=icp),
+    ):
+        assert f'rel="noopener noreferrer">{icp}</a></footer>' in body
+    app_settings = replace(make_settings(tmp_path), icp=icp)
+    app = create_app(settings=app_settings, service=make_service(tmp_path, settings=app_settings),
+                     access_log=AccessLog(tmp_path / "access.jsonl"))
+    page = peer_client(app).get("/sso/logout", params={"caller": "task"})
+    assert page.status_code == 200 and icp in page.text and '<button class="fs-btn" type="submit">' in page.text

@@ -189,6 +189,8 @@ def test_settings_from_environment_and_schema_names():
     )
     assert settings.redirect_uri == "https://example.com/sso/callback" and settings.secure
     assert settings.cookie_domain == "example.com"
+    assert settings.icp == ""
+    assert Settings.from_environment(env={"SSO_ICP": " 某ICP备00000000号-1 "}).icp == "某ICP备00000000号-1"
     with pytest.raises(ValueError):
         MysqlSettings(database="yice_sso`; DROP")
     assert Path(settings.callers_path).name == "callers.v1.json"
