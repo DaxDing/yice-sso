@@ -1,0 +1,29 @@
+[project]
+name = "yice-sso"
+version = "1.0.0"
+description = "Shared Feishu single sign-on for sibling web apps under one parent domain"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "pydantic>=2.7,<3",
+  "uvicorn>=0.30,<1",
+  "python-dotenv>=1,<2",
+  "pymysql>=1.1,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<9", "httpx>=0.27,<0.29", "ruff>=0.12,<1"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["mysql: runs against a private disposable mysqld; skipped when mysqld is absent"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

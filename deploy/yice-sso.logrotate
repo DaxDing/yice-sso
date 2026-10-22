@@ -1,0 +1,12 @@
+# Installed as /etc/logrotate.d/yice-sso. The service appends and closes per line,
+# so a rename needs no signal; nocreate lets the service create the next file as its own user.
+/var/log/yice-sso/*.jsonl {
+    daily
+    rotate 180
+    dateext
+    missingok
+    notifempty
+    compress
+    delaycompress
+    nocreate
+}

@@ -1,0 +1,44 @@
+[Unit]
+Description=yice-sso (shared Feishu login for sibling web apps under one parent domain)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/yice/yice-sso/current
+# systemd reads .env as root; the sandboxed process must not re-read it (and cannot).
+EnvironmentFile=/opt/yice/yice-sso/.env
+Environment=SSO_ENV_FILE=/dev/null
+# Runtime paths and bind live only here: keep them out of .env, which would override them.
+Environment=SSO_ACCESS_LOG_PATH=/var/log/yice-sso/access.jsonl
+Environment=SSO_HOST=0.0.0.0
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# 0.0.0.0 so Task reaches /v1 over the VPC; the security group has no public 8773 rule and
+# /sso answers loopback (nginx) peers only.
+ExecStart=/opt/yice/yice-sso/current/.venv/bin/python -m sso_service.cli serve --host 0.0.0.0 --port 8773
+Restart=always
+RestartSec=3
+
+DynamicUser=yes
+LogsDirectory=yice-sso
+UMask=0027
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

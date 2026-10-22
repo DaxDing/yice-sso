@@ -1,0 +1,18 @@
+{
+  "catalog_version": 1,
+  "providers": {
+    "default": {
+      "label": "示例主企业",
+      "directory": true,
+      "app_id_env": "SSO_FEISHU_DEFAULT_APP_ID",
+      "app_secret_env": "SSO_FEISHU_DEFAULT_APP_SECRET"
+    },
+    "partner": {
+      "label": "示例合作企业",
+      "directory": false,
+      "app_id_env": "SSO_FEISHU_PARTNER_APP_ID",
+      "app_secret_env": "SSO_FEISHU_PARTNER_APP_SECRET",
+      "tenant_key_env": "SSO_FEISHU_PARTNER_TENANT_KEY"
+    }
+  }
+}

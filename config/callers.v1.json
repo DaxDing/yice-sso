@@ -1,0 +1,19 @@
+{
+  "catalog_version": 1,
+  "callers": {
+    "info": {
+      "label": "portal web",
+      "origins": ["https://example.com"],
+      "providers": ["default", "partner"],
+      "token_env": "SSO_CALLER_INFO_TOKEN",
+      "sources": ["127.0.0.1/32"]
+    },
+    "task": {
+      "label": "ops console",
+      "origins": ["https://task.example.com"],
+      "providers": ["default"],
+      "token_env": "SSO_CALLER_TASK_TOKEN",
+      "sources": ["10.0.0.50/32"]
+    }
+  }
+}

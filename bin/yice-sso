@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+if [[ -n "${SSO_PYTHON:-}" ]]; then
+  exec "$SSO_PYTHON" -m sso_service.cli "$@"
+fi
+if ! command -v uv >/dev/null 2>&1; then
+  printf '%s\n' '{"ok":false,"error":{"code":"runtime_missing","message":"Install uv or set SSO_PYTHON"}}' >&2
+  exit 2
+fi
+exec uv run --project "$PROJECT_ROOT" --locked python -m sso_service.cli "$@"
