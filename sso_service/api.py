@@ -325,13 +325,19 @@ def create_app(
             return page(request, 400, error_page("caller_unavailable"))
         note(request, caller=target.id)
         body = logout_page(base=base, caller_id=target.id, caller_label=target.label, next_url=next)
-        return HTMLResponse(body, headers={**PAGE_HEADERS, "Content-Security-Policy": LOGOUT_FORM_POLICY})
+        # no-referrer would make the browser send "Origin: null" on this form's POST and fail the check below.
+        headers = {**PAGE_HEADERS, "Content-Security-Policy": LOGOUT_FORM_POLICY, "Referrer-Policy": "same-origin"}
+        return HTMLResponse(body, headers=headers)
 
     @application.post("/sso/logout", dependencies=browser)
     async def sso_logout(request: Request):
         # Same-origin form posts only: the shared session must not end from another site's navigation.
+        # An opaque "null" Origin (privacy settings, no-referrer) falls back to the browser-set Sec-Fetch-Site.
         origin = request.headers.get("origin")
-        same_origin = origin == web_origin if origin else request.headers.get("sec-fetch-site") == "same-origin"
+        if origin and origin != "null":
+            same_origin = origin == web_origin
+        else:
+            same_origin = request.headers.get("sec-fetch-site") == "same-origin"
         if not same_origin:
             note(request, error_code="logout_forbidden")
             return page(request, 403, error_page("logout_forbidden"))

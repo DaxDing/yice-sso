@@ -149,6 +149,8 @@ def test_logout_get_only_shows_a_same_origin_form(env):
     page = client.get("/sso/logout", params={"caller": "task"}, headers={"Cookie": f"yice_sso={session}"})
     assert page.status_code == 200 and '<form method="post" action="https://example.com/sso/logout">' in page.text
     assert "form-action 'self'" in page.headers["content-security-policy"]
+    # With no-referrer the browser would post "Origin: null" and the same-origin check would refuse it.
+    assert page.headers["referrer-policy"] == "same-origin"
     assert store.sessions and not any(c.startswith("yice_sso=") for c in _cookies(page))
 
 
@@ -158,7 +160,19 @@ def test_cross_site_logout_post_is_refused(env):
     session = _session_token(_browser_login(client))
     assert _logout(client, session, origin="https://evil.example").status_code == 403
     assert _logout(client, session, origin=None).status_code == 403
+    assert _logout(client, session, origin="null").status_code == 403
+    cross = {"Cookie": f"yice_sso={session}", "Origin": "null", "Sec-Fetch-Site": "cross-site"}
+    assert client.post("/sso/logout", content="caller=task", headers=cross).status_code == 403
     assert store.sessions
+
+
+def test_logout_with_an_opaque_origin_falls_back_to_fetch_metadata(env):
+    app, store, _ = env
+    client = peer_client(app)
+    session = _session_token(_browser_login(client))
+    headers = {"Cookie": f"yice_sso={session}", "Origin": "null", "Sec-Fetch-Site": "same-origin"}
+    response = client.post("/sso/logout", content="caller=task", headers=headers)
+    assert response.status_code == 303 and not store.sessions
 
 
 def test_logout_revokes_and_clears_the_parent_domain_cookie(env):
